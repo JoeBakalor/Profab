@@ -194,6 +194,14 @@ static uint8_t wifi_introducer_char_notify_value                              = 
 static uint8_t wifi_introducer_char_scan_result_value[GATT_ATTRIBUTE_SIZE]    = "NA";
 static uint8_t wifi_introducer_char_command_control_value                     = 0;
 
+/*Profab gatt values*/
+static uint8_t skyplug_fan_level                                              = 0x01;//default fan level is zero, max level is 0x06
+static uint8_t skyplug_fan_power                                              = 0x01;//default value is off, on is 0x01
+static uint8_t skyplug_fan_direction                                          = 0x01;//default value is forward or 0x00, 0x01 is reverse
+
+static uint8_t skyplug_light_level                                            = 0x01;//default lighting level is 0% -> 0x00 = 0%  to 0xFF = 100%
+static uint8_t skyplug_light_power                                            = 0x01;//default value is off, on is 0x01
+static uint8_t skyplug_light_min_dim_level                                    = 0x01;//default value is 0.  There are 7 discrete levels 0x00-0x06
 
 static wifi_introducer_state_t  wifi_introducer_state;
 static host_info_t              wifi_introducer_hostinfo;
@@ -208,8 +216,6 @@ const command_t wifi_introducer_console_command_table[] =
     CMD_TABLE_END
 };
 
-
-
 attribute_t gatt_user_attributes[] =
 {
         { HANDLE_WIFI_INTRO_SENS_GAP_SERVICE_CHAR_DEV_NAME_VAL,        sizeof( wifi_introducer_device_name )                , wifi_introducer_device_name },
@@ -222,9 +228,14 @@ attribute_t gatt_user_attributes[] =
         { HANDLE_WIFI_INTRO_SENS_NW_SERVICE_CHAR_SCAN_RESULT_VAL,      sizeof( wifi_introducer_char_scan_result_value )     , &wifi_introducer_char_scan_result_value },
         { HANDLE_WIFI_INTOR_SENS_NW_SERVICE_CHAR_COMMAND_CONTROL_VAL,  sizeof( wifi_introducer_char_command_control_value ) , &wifi_introducer_char_command_control_value },
         { HANDLE_WIFI_INTRO_SENS_NW_SERVICE_CHAR_SCAN_RESULT_CFG_DESC, 2                                                    , (void*)&wifi_introducer_hostinfo.scan_result_characteristic_client_configuration },
-
-
+        { HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_LEVEL_VAL,               1                                                    , &skyplug_fan_level},
+        { HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_POWER_VAL,               1                                                    , &skyplug_fan_power},
+        { HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_DIRECTION_VAL,           1                                                    , &skyplug_fan_direction},
+        { HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_LEVEL_VAL,           1                                                    , &skyplug_light_level},
+        { HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_POWER_VAL,           1                                                    , &skyplug_light_power},
+        { HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_MIN_DIM_LEVEL_VAL,   1                                                    , &skyplug_light_min_dim_level},
 };
+
 static wiced_semaphore_t                join_semaphore;
 
 //semphore to signal to start scanning for access points
@@ -391,8 +402,73 @@ static const uint8_t wifi_introducer_gatt_server_database[]=
         /* Handle 0x62: characteristic Battery Level, handle 0x63 characteristic value */
         CHARACTERISTIC_UUID16( HANDLE_WIFI_INTRO_SENS_BATTERY_SERVICE_CHAR_LEVEL, HANDLE_WIFI_INTRO_SENS_BATTERY_SERVICE_CHAR_LEVEL_VAL,
                 GATT_UUID_BATTERY_LEVEL, LEGATTDB_CHAR_PROP_READ, LEGATTDB_PERM_READABLE),
+
+    /* Declare Skyplug Fan Service*/
+    PRIMARY_SERVICE_UUID128(HANDLE_SKYPLUG_FAN_SERVICE, UUID_SKYPLUG_FAN_SERVICE),
+
+        /* Declare characteristic for fan level  */
+        CHARACTERISTIC_UUID128_WRITABLE( HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_LEVEL, HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_LEVEL_VAL,
+                UUID_SKYPLUG_FAN_SERVICE_CHAR_FAN_LEVEL, LEGATTDB_CHAR_PROP_READ | LEGATTDB_CHAR_PROP_WRITE,
+                LEGATTDB_PERM_READABLE | LEGATTDB_PERM_WRITE_CMD | LEGATTDB_PERM_WRITE_REQ
+                | LEGATTDB_PERM_AUTH_READABLE | LEGATTDB_PERM_AUTH_WRITABLE ),
+
+       /* Declare characteristic for fan power  */
+       CHARACTERISTIC_UUID128_WRITABLE( HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_POWER, HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_POWER_VAL,
+                UUID_SKYPLUG_FAN_SERVICE_CHAR_FAN_POWER, LEGATTDB_CHAR_PROP_READ | LEGATTDB_CHAR_PROP_WRITE,
+                LEGATTDB_PERM_READABLE | LEGATTDB_PERM_WRITE_CMD | LEGATTDB_PERM_WRITE_REQ
+                | LEGATTDB_PERM_AUTH_READABLE | LEGATTDB_PERM_AUTH_WRITABLE ),
+
+       CHARACTERISTIC_UUID128_WRITABLE( HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_DIRECTION, HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_DIRECTION_VAL,
+                UUID_SKYPLUG_FAN_SERVICE_CHAR_FAN_DIRECTION, LEGATTDB_CHAR_PROP_READ | LEGATTDB_CHAR_PROP_WRITE,
+                LEGATTDB_PERM_READABLE | LEGATTDB_PERM_WRITE_CMD | LEGATTDB_PERM_WRITE_REQ
+                | LEGATTDB_PERM_AUTH_READABLE | LEGATTDB_PERM_AUTH_WRITABLE ),
+
+    /* Declare Skyplug Lighting Service*/
+    PRIMARY_SERVICE_UUID128(HANDLE_SKYPLUG_LIGHT_SERVICE, UUID_SKYPLUG_LIGHT_SERVICE),
+
+                    /* Declare characteristic for fan level  */
+         CHARACTERISTIC_UUID128_WRITABLE( HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_LEVEL, HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_LEVEL_VAL,
+                UUID_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_LEVEL, LEGATTDB_CHAR_PROP_READ | LEGATTDB_CHAR_PROP_WRITE,
+                LEGATTDB_PERM_READABLE | LEGATTDB_PERM_WRITE_CMD | LEGATTDB_PERM_WRITE_REQ
+                | LEGATTDB_PERM_AUTH_READABLE | LEGATTDB_PERM_AUTH_WRITABLE ),
+
+                   /* Declare characteristic for fan power  */
+         CHARACTERISTIC_UUID128_WRITABLE( HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_POWER, HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_POWER_VAL,
+                UUID_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_POWER, LEGATTDB_CHAR_PROP_READ | LEGATTDB_CHAR_PROP_WRITE,
+                LEGATTDB_PERM_READABLE | LEGATTDB_PERM_WRITE_CMD | LEGATTDB_PERM_WRITE_REQ
+                | LEGATTDB_PERM_AUTH_READABLE | LEGATTDB_PERM_AUTH_WRITABLE ),
+
+         CHARACTERISTIC_UUID128_WRITABLE( HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_MIN_DIM_LEVEL, HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_MIN_DIM_LEVEL_VAL,
+                UUID_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_MIN_DIM_LEVEL, LEGATTDB_CHAR_PROP_READ | LEGATTDB_CHAR_PROP_WRITE,
+                LEGATTDB_PERM_READABLE | LEGATTDB_PERM_WRITE_CMD | LEGATTDB_PERM_WRITE_REQ
+                | LEGATTDB_PERM_AUTH_READABLE | LEGATTDB_PERM_AUTH_WRITABLE ),
 };
 
+
+
+
+//HANDLE_SKYPLUG_FAN_SERVICE = 0x80,
+//
+//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_LEVEL,
+//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_LEVEL_VAL,
+//
+//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_POWER,
+//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_POWER_VAL,
+//
+//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_DIRECTION,
+//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_DIRECTION_VAL,
+//
+///* ADD SERVICE, CHARACTERISTIC AND DESCRIPTOR HANDLES FOR SKYPLUG LIGHT FUNCTIONALITY*/
+//HANDLE_SKYPLUG_LIGHT_SERVICE = 0x90,
+//
+//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_LEVEL,
+//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_LEVEL_VAL,
+//
+//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_POWER,
+//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_POWER_VAL,
+//
+//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_MIN_DIM_LEVEL,
+//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_MIN_DIM_LEVEL_VAL,
 /******************************************************************************
  *                          Function Definitions
  ******************************************************************************/
@@ -1132,6 +1208,48 @@ static wiced_bt_gatt_status_t wifi_introducer_gatt_server_write_request_handler(
     case HANDLE_WIFI_INTOR_SENS_NW_SERVICE_CHAR_COMMAND_CONTROL_CFG_DESC:
         break;
 
+    case HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_LEVEL_VAL:
+
+        //skyplug_fan_level
+
+        WPRINT_BT_APP_INFO(("Write Request: Fan Level"));
+        break;
+
+    case HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_POWER_VAL:
+
+        skyplug_fan_power = p_attr[0];
+
+        WPRINT_BT_APP_INFO(("Write Request: Fan power"));
+        break;
+
+    case HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_DIRECTION_VAL:
+
+        //skyplug_fan_direction
+
+        WPRINT_BT_APP_INFO(("Write Request: Fan direction"));
+        break;
+
+    case HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_LEVEL_VAL:
+
+        //skyplug_light_level
+
+        WPRINT_BT_APP_INFO(("Write Request: Light Level"));
+        break;
+
+    case HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_POWER_VAL:
+
+        //skyplug_light_power
+
+        WPRINT_BT_APP_INFO(("Write Request: Light power"));
+        break;
+
+    case HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_MIN_DIM_LEVEL_VAL:
+
+        //skyplug_light_min_dim_level
+
+        WPRINT_BT_APP_INFO(("Write Request: Light min dim level"));
+        break;
+
     default:
         WPRINT_BT_APP_INFO(( "wifi_introducer_gatt_server_write_request_handler:default value\n" ));
         result = WICED_BT_GATT_INVALID_HANDLE;
@@ -1145,6 +1263,15 @@ static wiced_bt_gatt_status_t wifi_introducer_gatt_server_write_request_handler(
     }
     return result;
 }
+
+///*Profab gatt values*/
+//static uint8_t skyplug_fan_level                                              = 0x01;//default fan level is zero, max level is 0x06
+//static uint8_t skyplug_fan_power                                              = 0x01;//default value is off, on is 0x01
+//static uint8_t skyplug_fan_direction                                          = 0x01;//default value is forward or 0x00, 0x01 is reverse
+//
+//static uint8_t skyplug_light_level                                            = 0x01;//default lighting level is 0% -> 0x00 = 0%  to 0xFF = 100%
+//static uint8_t skyplug_light_power                                            = 0x01;//default value is off, on is 0x01
+//static uint8_t skyplug_light_min_dim_level                                    = 0x01;//default value is 0.  There are 7 discrete levels 0x00-0x06
 
 /*
  * Write Execute Procedure
