@@ -92,6 +92,9 @@
 #define BUTTON_WORKER_STACK_SIZE              ( 4096 )
 #define BUTTON_WORKER_QUEUE_SIZE              ( 4 )
 
+#define RX_BUFFER_SIZE    64
+#define TEST_STR          "\r\nType something! Keystrokes are echoed to the terminal ...\r\n> "
+
 /******************************************************
  *                   Enumerations
  ******************************************************/
@@ -130,6 +133,8 @@ wiced_result_t                  wifi_introducer_load_key_to_addr_resolution_db  
 static void                     wifi_join_thread                                                (wiced_thread_arg_t arg);
 static void                     create_wifi_join_thread                                         (void);
 static void                     create_wifi_scan_manager_thread                                 (void);
+static void                     create_skyplug_uart_manager_thread                              (void);
+
 void                            wifi_introducer_save_link_key                                   ( wiced_bt_device_link_keys_t  paired_device_keys );
 void                            wifi_introducer_read_link_key                                   ( wiced_bt_device_link_keys_t* paired_device_keys );
 static void                     send_scan_results                                               ( uint8_t *result_string );
@@ -185,6 +190,20 @@ wiced_result_t scan_result_handler( wiced_scan_handler_result_t* malloced_scan_r
  *                                Variables Definitions
  ******************************************************************************/
 
+wiced_uart_config_t uart_config =
+{
+    .baud_rate    = 115200,
+    .data_width   = DATA_WIDTH_8BIT,
+    .parity       = NO_PARITY,
+    .stop_bits    = STOP_BITS_1,
+    .flow_control = FLOW_CONTROL_DISABLED,
+};
+
+wiced_ring_buffer_t rx_buffer;
+uint8_t             rx_data[RX_BUFFER_SIZE];
+
+
+
 static uint8_t wifi_introducer_device_name[ ]                                 = "JB_WiFiInt";
 static uint8_t wifi_introducer_appearance_name[2]                             = { BIT16_TO_8(APPEARANCE_GENERIC_TAG) };
 static uint8_t wifi_introducer_char_nw_security_value                         = WICED_SECURITY_OPEN;
@@ -209,6 +228,7 @@ static wiced_bool_t             is_connected = FALSE;
 static wiced_bool_t             ap_scanning_enabled = FALSE;
 static wiced_thread_t           join_handler;
 static wiced_thread_t           network_scan_manager;
+static wiced_thread_t           skyplug_uart_manager;//thread for managing data recieved over UART
 
 const command_t wifi_introducer_console_command_table[] =
 {
@@ -240,6 +260,8 @@ static wiced_semaphore_t                join_semaphore;
 
 //semphore to signal to start scanning for access points
 static wiced_semaphore_t                start_ap_scan_semaphore;
+static wiced_semaphore_t                skyplug_uart_semaphore;
+
 
 static char                             wifi_introducer_command_buffer[MAX_WIFI_INTRODUCER_COMMAND_LENGTH];
 static char                             wifi_introducer_command_history_buffer[MAX_WIFI_INTRODUCER_COMMAND_LENGTH * WIFI_INTRODUCER_CONSOLE_COMMAND_HISTORY_LENGTH];
@@ -444,31 +466,6 @@ static const uint8_t wifi_introducer_gatt_server_database[]=
                 | LEGATTDB_PERM_AUTH_READABLE | LEGATTDB_PERM_AUTH_WRITABLE ),
 };
 
-
-
-
-//HANDLE_SKYPLUG_FAN_SERVICE = 0x80,
-//
-//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_LEVEL,
-//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_LEVEL_VAL,
-//
-//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_POWER,
-//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_POWER_VAL,
-//
-//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_DIRECTION,
-//    HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_DIRECTION_VAL,
-//
-///* ADD SERVICE, CHARACTERISTIC AND DESCRIPTOR HANDLES FOR SKYPLUG LIGHT FUNCTIONALITY*/
-//HANDLE_SKYPLUG_LIGHT_SERVICE = 0x90,
-//
-//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_LEVEL,
-//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_LEVEL_VAL,
-//
-//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_POWER,
-//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_POWER_VAL,
-//
-//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_MIN_DIM_LEVEL,
-//    HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_MIN_DIM_LEVEL_VAL,
 /******************************************************************************
  *                          Function Definitions
  ******************************************************************************/
@@ -549,10 +546,24 @@ void application_start( void )
     wiced_init();
     wiced_rtos_init_semaphore(&join_semaphore);
     /* Initialize the semaphore that will tell us when we have received the start ap scan command via central*/
-    wiced_rtos_init_semaphore(&start_ap_scan_semaphore);/*< TESTING */
+    wiced_rtos_init_semaphore(&start_ap_scan_semaphore);
+
+    /* Initialize semaphore that will tell us when we have received data from UART*/
+    wiced_rtos_init_semaphore(&skyplug_uart_semaphore);
     wifi_introducer_button_handler_init();
 
     WPRINT_BT_APP_INFO( ( "WiFi Introducer Sensor Start\n" ) );
+
+
+
+    /* Initialise ring buffer */
+    ring_buffer_init(&rx_buffer, rx_data, RX_BUFFER_SIZE );
+
+    /* Initialise UART. A ring buffer is used to hold received characters */
+    wiced_uart_init( STDIO_UART, &uart_config, &rx_buffer );
+
+    /* Send a test string to the terminal */
+    wiced_uart_transmit_bytes( STDIO_UART, TEST_STR, sizeof( TEST_STR ) - 1 );
 
     /* Join with new credentials */
     wiced_network_up( WICED_STA_INTERFACE, WICED_USE_EXTERNAL_DHCP_SERVER, NULL );
@@ -563,6 +574,7 @@ void application_start( void )
         wiced_bt_stack_init( wifi_introducer_bt_management_callback ,
                             &wiced_bt_cfg_settings, wiced_bt_cfg_buf_pools );
 
+        create_skyplug_uart_manager_thread();
         create_wifi_scan_manager_thread();
         create_wifi_join_thread();
     }
@@ -888,6 +900,50 @@ static void create_wifi_scan_manager_thread(void)
         return;
     }
 }
+
+/*
+ * Uart manager thread
+ */
+static void skyplug_uart_manager_thread(wiced_thread_arg_t arg){
+
+
+    uint32_t expected_data_size = 10;
+    char c[expected_data_size];
+
+
+    do{
+        //really we should have an interrupt set on UART that sets the semaphore and the data only is processed here if semaphore is set
+        if (wiced_uart_receive_bytes( STDIO_UART, &c, &expected_data_size, WICED_NEVER_TIMEOUT ) == WICED_SUCCESS){
+            WPRINT_APP_INFO(("UART data received, set semaphore process data and return"));
+            //wiced_rtos_set_semaphore(&skyplug_uart_semaphore);
+        } else {
+            WPRINT_APP_INFO(("No UART data, wait return control"));
+            //wiced_rtos_get_semaphore( &join_semaphore, NEVER_TIMEOUT);
+        }
+        //uint8_t i = 0;
+
+        wiced_uart_transmit_bytes( STDIO_UART, &c, 10 );
+
+        wiced_rtos_delay_milliseconds(10);
+        //wiced_rtos_get_semaphore( &join_semaphore, NEVER_TIMEOUT);
+
+    }while(1);
+}
+
+/*
+ * Create the uart manager thread
+ */
+static void create_skyplug_uart_manager_thread(void){
+
+    wiced_result_t result;
+    result = wiced_rtos_create_thread(&skyplug_uart_manager, WICED_DEFAULT_WORKER_PRIORITY, "Uart Manager", skyplug_uart_manager_thread, WICED_DEFAULT_APPLICATION_STACK_SIZE, NULL);
+    if (result)
+    {
+        WPRINT_APP_INFO(("%s: thread creation failed !!!!!!!!!\n",__func__ ));
+        return;
+    }
+}
+
 /*
  * wifi_introducer bt/ble link management callback
  */
@@ -1210,44 +1266,58 @@ static wiced_bt_gatt_status_t wifi_introducer_gatt_server_write_request_handler(
 
     case HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_LEVEL_VAL:
 
-        //skyplug_fan_level
+        if ( p_data->val_len == 1 ){
+            WPRINT_BT_APP_INFO(("Valid Write Request: Fan Level"));
+            skyplug_fan_level = p_attr[0];
+        }
 
-        WPRINT_BT_APP_INFO(("Write Request: Fan Level"));
         break;
 
     case HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_POWER_VAL:
 
-        skyplug_fan_power = p_attr[0];
+        if ( p_data->val_len == 1 ){
+            WPRINT_BT_APP_INFO(("Valid Write Request: Fan power"));
+            skyplug_fan_power = p_attr[0];
+        }
 
-        WPRINT_BT_APP_INFO(("Write Request: Fan power"));
         break;
 
     case HANDLE_SKYPLUG_FAN_SERVICE_CHAR_FAN_DIRECTION_VAL:
 
-        //skyplug_fan_direction
+        if ( p_data->val_len == 1 ){
+            WPRINT_BT_APP_INFO(("Valid Write Request: Fan direction"));
+            skyplug_fan_direction = p_attr[0];
+        }
 
-        WPRINT_BT_APP_INFO(("Write Request: Fan direction"));
         break;
 
     case HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_LEVEL_VAL:
 
-        //skyplug_light_level
+        if ( p_data->val_len == 1 ){
+            WPRINT_BT_APP_INFO((" Valid Write Request: Light Level"));
+            skyplug_light_level = p_attr[0];
+        }
 
-        WPRINT_BT_APP_INFO(("Write Request: Light Level"));
         break;
 
     case HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_POWER_VAL:
 
-        //skyplug_light_power
 
-        WPRINT_BT_APP_INFO(("Write Request: Light power"));
+        if ( p_data->val_len == 1 ){
+            WPRINT_BT_APP_INFO(("Valid Write Request: Light power"));
+            skyplug_light_power = p_attr[0];
+        }
+
         break;
 
     case HANDLE_SKYPLUG_LIGHT_SERVICE_CHAR_LIGHT_MIN_DIM_LEVEL_VAL:
 
-        //skyplug_light_min_dim_level
 
-        WPRINT_BT_APP_INFO(("Write Request: Light min dim level"));
+        if ( p_data->val_len == 1 ){
+            WPRINT_BT_APP_INFO(("Valid Write Request: Light min dim level"));
+            skyplug_light_min_dim_level = p_attr[0];
+        }
+
         break;
 
     default:
